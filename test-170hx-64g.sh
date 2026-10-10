@@ -1025,8 +1025,8 @@ copy_loop:
     mul.wide.u32 %off, %tid, 16;
     add.u64 %saddr, %src, %off;
     add.u64 %daddr, %dst, %off;
-    ld.global.cs.v4.u32 {%a, %b, %c, %d}, [%saddr];
-    st.global.cs.v4.u32 [%daddr], {%a, %b, %c, %d};
+    ld.global.v4.u32 {%a, %b, %c, %d}, [%saddr];
+    st.global.v4.u32 [%daddr], {%a, %b, %c, %d};
     add.u32 %tid, %tid, %stride;
     bra copy_loop;
 copy_done:
@@ -1100,6 +1100,21 @@ class CudaError(RuntimeError):
     pass
 
 
+def ptx_load_hint(rc: int) -> str:
+    common = "显存读写测试还没开始，不能据此判断卡是坏的。上面的容量和 UUID 仍然有效。"
+    if rc == 221:
+        return (
+            "驱动找不到 PTX 编译器 libnvidia-ptxjitcompiler，多半是没装完整的 NVIDIA 计算库。"
+            + common
+            + " 请改用带 CUDA 的 PyTorch 再跑: TORCH_PYTHON=~/ComfyUI/venv/bin/python bash test-170hx-64g.sh"
+        )
+    if rc == 218:
+        return "驱动拒绝编译内置测试程序。" + common
+    if rc == 209:
+        return "驱动没法给这块 GPU 生成可执行代码。" + common
+    return common
+
+
 class OutOfMemory(CudaError):
     pass
 
@@ -1167,14 +1182,8 @@ class Cuda:
         self.cuMemFree_v2.argtypes = [CUdeviceptr]
         self.cuMemGetInfo_v2 = self._sym("cuMemGetInfo_v2")
         self.cuMemGetInfo_v2.argtypes = [ctypes.POINTER(ctypes.c_size_t), ctypes.POINTER(ctypes.c_size_t)]
-        self.cuModuleLoadDataEx = self._sym("cuModuleLoadDataEx")
-        self.cuModuleLoadDataEx.argtypes = [
-            ctypes.POINTER(ctypes.c_void_p),
-            ctypes.c_char_p,
-            ctypes.c_uint,
-            ctypes.POINTER(ctypes.c_int),
-            ctypes.POINTER(ctypes.c_void_p),
-        ]
+        self.cuModuleLoadData = self._sym("cuModuleLoadData")
+        self.cuModuleLoadData.argtypes = [ctypes.POINTER(ctypes.c_void_p), ctypes.c_char_p]
         self.cuModuleGetFunction = self._sym("cuModuleGetFunction")
         self.cuModuleGetFunction.argtypes = [ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p, ctypes.c_char_p]
         self.cuLaunchKernel = self._sym("cuLaunchKernel")
@@ -1206,7 +1215,7 @@ class Cuda:
             self.cuInit, self.cuDeviceGet, self.cuDeviceGetName, self.cuDeviceGetAttribute,
             self.cuCtxCreate_v2, self.cuCtxDestroy_v2, self.cuCtxSynchronize,
             self.cuMemAlloc_v2, self.cuMemFree_v2, self.cuMemGetInfo_v2,
-            self.cuModuleLoadDataEx, self.cuModuleGetFunction, self.cuLaunchKernel,
+            self.cuModuleLoadData, self.cuModuleGetFunction, self.cuLaunchKernel,
             self.cuMemcpyDtoH_v2, self.cuMemcpyHtoD_v2,
             self.cuEventCreate, self.cuEventRecord, self.cuEventSynchronize,
             self.cuEventElapsedTime, self.cuEventDestroy, self.cuGetErrorString,
@@ -1230,16 +1239,15 @@ class Cuda:
         return int(value.value)
 
     def _load_module(self) -> None:
-        errbuf = ctypes.create_string_buffer(16384)
-        options = (ctypes.c_int * 2)(5, 6)  # ERROR_LOG_BUFFER, SIZE_BYTES
-        values = (ctypes.c_void_p * 2)(
-            ctypes.cast(errbuf, ctypes.c_void_p),
-            ctypes.c_void_p(len(errbuf)),
-        )
-        rc = self.cuModuleLoadDataEx(ctypes.byref(self.mod), PTX.encode(), 2, options, values)
-        if rc != 0:
-            log = errbuf.value.decode(errors="replace")
-            raise CudaError(f"加载测试内核失败 ({rc}): {log}")
+        image = ctypes.c_char_p(PTX.encode())
+        rc = self.cuModuleLoadData(ctypes.byref(self.mod), image)
+        if rc == 0:
+            return
+        err = ctypes.c_char_p()
+        text = ""
+        if self.cuGetErrorString(rc, ctypes.byref(err)) == 0 and err.value:
+            text = err.value.decode(errors="replace")
+        raise CudaError(f"加载测试内核失败 ({rc} {text})。{ptx_load_hint(rc)}")
 
     def _func(self, name: bytes):
         fn = ctypes.c_void_p()
@@ -1780,7 +1788,8 @@ def test_gpu(smi_index: int, cuda_index: int, torch_mod, stress_s: int, force: b
         else:
             ptx_deep(report, cuda_index, floor, stress_s)
     except Exception as exc:
-        traceback.print_exc()
+        if "加载测试内核失败" not in str(exc):
+            traceback.print_exc()
         report.fail(f"深度测试中断: {type(exc).__name__}: {exc}")
 
     section("测试后的 ECC / Xid")

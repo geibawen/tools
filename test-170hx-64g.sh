@@ -915,7 +915,7 @@ PTX = r"""
 .visible .entry fill_i32(.param .u64 buf, .param .u32 n, .param .u32 salt)
 {
     .reg .pred %p;
-    .reg .b32 %n, %salt, %tid, %stride, %val, %bdim, %bid, %tx, %grid;
+    .reg .b32 %n, %salt, %idx, %stride, %val, %bdim, %bid, %tx, %grid;
     .reg .b64 %buf, %addr, %off;
     ld.param.u64 %buf, [buf];
     ld.param.u32 %n, [n];
@@ -923,17 +923,17 @@ PTX = r"""
     mov.u32 %tx, %tid.x;
     mov.u32 %bdim, %ntid.x;
     mov.u32 %bid, %ctaid.x;
-    mad.lo.u32 %tid, %bid, %bdim, %tx;
+    mad.lo.u32 %idx, %bid, %bdim, %tx;
     mov.u32 %grid, %nctaid.x;
     mul.lo.u32 %stride, %grid, %bdim;
 fill_loop:
-    setp.ge.u32 %p, %tid, %n;
+    setp.ge.u32 %p, %idx, %n;
     @%p bra fill_done;
-    xor.b32 %val, %tid, %salt;
-    mul.wide.u32 %off, %tid, 4;
+    xor.b32 %val, %idx, %salt;
+    mul.wide.u32 %off, %idx, 4;
     add.u64 %addr, %buf, %off;
     st.global.u32 [%addr], %val;
-    add.u32 %tid, %tid, %stride;
+    add.u32 %idx, %idx, %stride;
     bra fill_loop;
 fill_done:
     ret;
@@ -942,7 +942,7 @@ fill_done:
 .visible .entry check_i32(.param .u64 buf, .param .u32 n, .param .u32 salt, .param .u64 bad, .param .u64 first)
 {
     .reg .pred %p;
-    .reg .b32 %n, %salt, %tid, %stride, %got, %exp, %seen, %firstl, %bdim, %bid, %tx, %grid, %ign;
+    .reg .b32 %n, %salt, %idx, %stride, %got, %exp, %seen, %firstl, %bdim, %bid, %tx, %grid, %ign;
     .reg .b64 %buf, %addr, %off, %bad, %firstp;
     ld.param.u64 %buf, [buf];
     ld.param.u32 %n, [n];
@@ -952,22 +952,22 @@ fill_done:
     mov.u32 %tx, %tid.x;
     mov.u32 %bdim, %ntid.x;
     mov.u32 %bid, %ctaid.x;
-    mad.lo.u32 %tid, %bid, %bdim, %tx;
+    mad.lo.u32 %idx, %bid, %bdim, %tx;
     mov.u32 %grid, %nctaid.x;
     mul.lo.u32 %stride, %grid, %bdim;
     mov.u32 %seen, 0;
     mov.b32 %firstl, 0xFFFFFFFF;
 check_loop:
-    setp.ge.u32 %p, %tid, %n;
+    setp.ge.u32 %p, %idx, %n;
     @%p bra check_done;
-    mul.wide.u32 %off, %tid, 4;
+    mul.wide.u32 %off, %idx, 4;
     add.u64 %addr, %buf, %off;
     ld.global.u32 %got, [%addr];
-    xor.b32 %exp, %tid, %salt;
+    xor.b32 %exp, %idx, %salt;
     setp.ne.u32 %p, %got, %exp;
     @%p mov.u32 %seen, 1;
-    @%p min.u32 %firstl, %firstl, %tid;
-    add.u32 %tid, %tid, %stride;
+    @%p min.u32 %firstl, %firstl, %idx;
+    add.u32 %idx, %idx, %stride;
     bra check_loop;
 check_done:
     setp.eq.u32 %p, %seen, 1;
@@ -979,7 +979,7 @@ check_done:
 .visible .entry xor_i32(.param .u64 buf, .param .u32 n, .param .u32 mask)
 {
     .reg .pred %p;
-    .reg .b32 %n, %mask, %tid, %stride, %val, %bdim, %bid, %tx, %grid;
+    .reg .b32 %n, %mask, %idx, %stride, %val, %bdim, %bid, %tx, %grid;
     .reg .b64 %buf, %addr, %off;
     ld.param.u64 %buf, [buf];
     ld.param.u32 %n, [n];
@@ -987,18 +987,18 @@ check_done:
     mov.u32 %tx, %tid.x;
     mov.u32 %bdim, %ntid.x;
     mov.u32 %bid, %ctaid.x;
-    mad.lo.u32 %tid, %bid, %bdim, %tx;
+    mad.lo.u32 %idx, %bid, %bdim, %tx;
     mov.u32 %grid, %nctaid.x;
     mul.lo.u32 %stride, %grid, %bdim;
 xor_loop:
-    setp.ge.u32 %p, %tid, %n;
+    setp.ge.u32 %p, %idx, %n;
     @%p bra xor_done;
-    mul.wide.u32 %off, %tid, 4;
+    mul.wide.u32 %off, %idx, 4;
     add.u64 %addr, %buf, %off;
     ld.global.u32 %val, [%addr];
     xor.b32 %val, %val, %mask;
     st.global.u32 [%addr], %val;
-    add.u32 %tid, %tid, %stride;
+    add.u32 %idx, %idx, %stride;
     bra xor_loop;
 xor_done:
     ret;
@@ -1007,7 +1007,7 @@ xor_done:
 .visible .entry copy_v4(.param .u64 dst, .param .u64 src, .param .u32 nvec)
 {
     .reg .pred %p;
-    .reg .b32 %n, %tid, %stride, %tx, %bdim, %bid, %grid;
+    .reg .b32 %n, %idx, %stride, %tx, %bdim, %bid, %grid;
     .reg .b32 %a, %b, %c, %d;
     .reg .b64 %dst, %src, %off, %saddr, %daddr;
     ld.param.u64 %dst, [dst];
@@ -1016,18 +1016,18 @@ xor_done:
     mov.u32 %tx, %tid.x;
     mov.u32 %bdim, %ntid.x;
     mov.u32 %bid, %ctaid.x;
-    mad.lo.u32 %tid, %bid, %bdim, %tx;
+    mad.lo.u32 %idx, %bid, %bdim, %tx;
     mov.u32 %grid, %nctaid.x;
     mul.lo.u32 %stride, %grid, %bdim;
 copy_loop:
-    setp.ge.u32 %p, %tid, %n;
+    setp.ge.u32 %p, %idx, %n;
     @%p bra copy_done;
-    mul.wide.u32 %off, %tid, 16;
+    mul.wide.u32 %off, %idx, 16;
     add.u64 %saddr, %src, %off;
     add.u64 %daddr, %dst, %off;
     ld.global.v4.u32 {%a, %b, %c, %d}, [%saddr];
     st.global.v4.u32 [%daddr], {%a, %b, %c, %d};
-    add.u32 %tid, %tid, %stride;
+    add.u32 %idx, %idx, %stride;
     bra copy_loop;
 copy_done:
     ret;
@@ -1037,14 +1037,14 @@ copy_done:
 {
     .reg .pred %p;
     .reg .f32 %a, %b, %c;
-    .reg .u32 %i, %loops, %tid, %tx, %bdim, %bid;
+    .reg .u32 %i, %loops, %idx, %tx, %bdim, %bid;
     .reg .b64 %out, %addr, %off;
     ld.param.u64 %out, [out];
     ld.param.u32 %loops, [loops];
     mov.u32 %tx, %tid.x;
     mov.u32 %bdim, %ntid.x;
     mov.u32 %bid, %ctaid.x;
-    mad.lo.u32 %tid, %bid, %bdim, %tx;
+    mad.lo.u32 %idx, %bid, %bdim, %tx;
     mov.f32 %a, 0f3F7FBE77;
     mov.f32 %b, 0f3A83126F;
     mov.f32 %c, 0f00000000;
@@ -1056,7 +1056,7 @@ fma_loop:
     add.u32 %i, %i, 1;
     bra fma_loop;
 fma_done:
-    mul.wide.u32 %off, %tid, 4;
+    mul.wide.u32 %off, %idx, 4;
     add.u64 %addr, %out, %off;
     st.global.f32 [%addr], %c;
     ret;
@@ -1066,7 +1066,7 @@ fma_done:
 {
     .reg .pred %p;
     .reg .f32 %v, %scale, %bias;
-    .reg .b32 %n, %tid, %stride, %tx, %bdim, %bid, %grid;
+    .reg .b32 %n, %idx, %stride, %tx, %bdim, %bid, %grid;
     .reg .b64 %out, %inp, %off, %oaddr, %iaddr;
     ld.param.u64 %out, [out];
     ld.param.u64 %inp, [inp];
@@ -1076,19 +1076,19 @@ fma_done:
     mov.u32 %tx, %tid.x;
     mov.u32 %bdim, %ntid.x;
     mov.u32 %bid, %ctaid.x;
-    mad.lo.u32 %tid, %bid, %bdim, %tx;
+    mad.lo.u32 %idx, %bid, %bdim, %tx;
     mov.u32 %grid, %nctaid.x;
     mul.lo.u32 %stride, %grid, %bdim;
 scale_loop:
-    setp.ge.u32 %p, %tid, %n;
+    setp.ge.u32 %p, %idx, %n;
     @%p bra scale_done;
-    mul.wide.u32 %off, %tid, 4;
+    mul.wide.u32 %off, %idx, 4;
     add.u64 %iaddr, %inp, %off;
     add.u64 %oaddr, %out, %off;
     ld.global.f32 %v, [%iaddr];
     fma.rn.f32 %v, %v, %scale, %bias;
     st.global.f32 [%oaddr], %v;
-    add.u32 %tid, %tid, %stride;
+    add.u32 %idx, %idx, %stride;
     bra scale_loop;
 scale_done:
     ret;
